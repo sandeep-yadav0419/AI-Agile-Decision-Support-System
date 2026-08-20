@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+/*
+  Fonts (IBM Plex Sans / IBM Plex Mono) are loaded via <link> tags in
+  index.html rather than @import here — Tailwind's own @import expands into
+  @layer rules, which pushes any later @import out of valid CSS order and
+  also delays font discovery until the CSS is parsed.
+
+  Design tokens for the whole app, not just this page. Established now in
+  Feature 01 so every later feature (Dashboard, Kanban, etc.) draws from the
+  same palette instead of improvising a new one per screen.
+
+  Direction: a light, precise "systems diagnostics" register suited to an
+  engineering/PM audience, using IBM Plex (designed for technical/enterprise
+  software) instead of the generic Inter-everywhere default, and a deep
+  teal signal color instead of the near-black + neon-accent look that AI
+  tools default to.
+*/
+@theme {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+
+  --color-canvas: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-ink: #12151b;
+  --color-muted: #5b6472;
+  --color-line: #e2e5ea;
+  --color-signal: #0e7c6b;
+  --color-signal-soft: #e4f2ef;
+  --color-critical: #b23b2e;
+  --color-critical-soft: #f7e9e7;
+}
+
+body {
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+/*
+  Shared form/button primitives. Introduced for the auth forms in Feature 02
+  but written generically since Project/Sprint/Task CRUD (Features 04-06)
+  will need the same inputs and buttons.
+*/
+@layer components {
+  .field-label {
+    @apply mb-1.5 block text-sm font-medium text-ink;
+  }
+
+  .field-input {
+    @apply w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink outline-none transition placeholder:text-muted/70 focus:border-signal focus:ring-2 focus:ring-signal/20;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-lg bg-ink px-4 py-2.5 text-sm font-medium text-white transition hover:bg-ink/90 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center rounded-lg border border-line bg-surface px-4 py-2.5 text-sm font-medium text-ink transition hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-50;
+  }
+}
