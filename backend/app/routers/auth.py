@@ -418,28 +418,49 @@ async def google_auth(
 
     google_profile = await verify_google_identity(
         id_token=payload.id_token,
+        credential=payload.credential,
         code=payload.code,
         redirect_uri=payload.redirect_uri,
     )
 
     email = google_profile["email"]
-    user = db.query(User).filter(User.email == email).first()
+    google_sub = google_profile.get("google_sub")
+
+    # 1. Search for existing account via OAuthAccount table
+    user = None
+    if google_sub:
+        oauth_rec = db.query(OAuthAccount).filter(
+            OAuthAccount.provider == "GOOGLE",
+            OAuthAccount.provider_user_id == google_sub,
+        ).first()
+        if oauth_rec:
+            user = db.query(User).filter(User.id == oauth_rec.user_id).first()
+
+    # 2. Search for existing account via User.google_sub
+    if not user and google_sub:
+        user = db.query(User).filter(User.google_sub == google_sub).first()
+
+    # 3. Search for existing account by verified email (safe account linking for existing local users)
+    if not user:
+        user = db.query(User).filter(User.email == email).first()
 
     if user:
-        if not user.google_sub and google_profile.get("google_sub"):
-            user.google_sub = google_profile["google_sub"]
+        # Safely link Google identity attributes to existing user
+        if not user.google_sub and google_sub:
+            user.google_sub = google_sub
         if not user.avatar_url and google_profile.get("avatar_url"):
             user.avatar_url = google_profile["avatar_url"]
         db.commit()
         db.refresh(user)
     else:
+        # Create new local user for first-time Google sign-in
         user = User(
             email=email,
             full_name=google_profile["full_name"],
             hashed_password=hash_password(secrets.token_urlsafe(32)),
             role="Developer",
             auth_provider="google",
-            google_sub=google_profile.get("google_sub"),
+            google_sub=google_sub,
             avatar_url=google_profile.get("avatar_url"),
             is_active=True,
         )
@@ -450,20 +471,23 @@ async def google_auth(
             db.rollback()
             user = db.query(User).filter(User.email == email).first()
             if not user:
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to provision user")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to provision user account from Google identity",
+                )
         db.refresh(user)
 
-    # Record OAuthAccount
-    if google_profile.get("google_sub"):
+    # 4. Guarantee OAuthAccount external identity record is present
+    if google_sub:
         oauth_rec = db.query(OAuthAccount).filter(
             OAuthAccount.provider == "GOOGLE",
-            OAuthAccount.provider_user_id == google_profile["google_sub"],
+            OAuthAccount.provider_user_id == google_sub,
         ).first()
         if not oauth_rec:
             oauth_rec = OAuthAccount(
                 user_id=user.id,
                 provider="GOOGLE",
-                provider_user_id=google_profile["google_sub"],
+                provider_user_id=google_sub,
                 provider_email=email,
             )
             db.add(oauth_rec)
@@ -472,13 +496,19 @@ async def google_auth(
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is inactive")
 
+    # 5. Issue standard local application JWT & session
     token = create_access_token(subject=user.email)
     csrf = generate_csrf_token()
     set_session_cookies(response, token, csrf)
 
     log_security_audit(
-        db, event_type="LOGIN_OAUTH_GOOGLE", status="SUCCESS", user_id=user.id,
-        ip_address=client_ip, user_agent=user_agent
+        db,
+        event_type="LOGIN_OAUTH_GOOGLE",
+        status="SUCCESS",
+        user_id=user.id,
+        ip_address=client_ip,
+        user_agent=user_agent,
+        details=f"Google identity authenticated for sub: {google_sub}",
     )
 
     return Token(access_token=token, csrf_token=csrf, user=UserResponse.model_validate(user))

@@ -12,6 +12,8 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
 import bcrypt
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token as google_id_token
 import httpx
 import jwt
 import pyotp
@@ -509,15 +511,31 @@ def create_notification(
 # ==========================================
 
 async def verify_google_identity(
-    id_token: str | None = None, code: str | None = None, redirect_uri: str | None = None
+    id_token: str | None = None,
+    credential: str | None = None,
+    code: str | None = None,
+    redirect_uri: str | None = None,
 ) -> dict:
-    async with httpx.AsyncClient(timeout=12.0) as client:
-        if code and not id_token:
-            if not settings.GOOGLE_CLIENT_ID or not settings.GOOGLE_CLIENT_SECRET:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Google OAuth client credentials not configured on server",
-                )
+    """
+    Verifies Google ID token / credential using Google's official Python verification library
+    (google.oauth2.id_token).
+    Validates:
+    - Cryptographic signature against Google's public keys
+    - Audience matches GOOGLE_CLIENT_ID
+    - Issuer is accounts.google.com or https://accounts.google.com
+    - Expiration timestamp
+    - Verified email status
+    """
+    token_to_verify = id_token or credential
+
+    # If an authorization code was provided instead of an ID token, exchange it first
+    if code and not token_to_verify:
+        if not settings.GOOGLE_CLIENT_ID or not settings.GOOGLE_CLIENT_SECRET:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Google OAuth client credentials not configured on server",
+            )
+        async with httpx.AsyncClient(timeout=12.0) as client:
             token_endpoint = "https://oauth2.googleapis.com/token"
             exchange_res = await client.post(
                 token_endpoint,
@@ -535,23 +553,36 @@ async def verify_google_identity(
                     detail="Google authorization code exchange failed",
                 )
             token_data = exchange_res.json()
-            id_token = token_data.get("id_token")
+            token_to_verify = token_data.get("id_token")
 
-        if not id_token:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No Google id_token or code provided",
-            )
+    if not token_to_verify:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Google credential or id_token is required",
+        )
 
-        tokeninfo_url = "https://oauth2.googleapis.com/tokeninfo"
-        res = await client.get(tokeninfo_url, params={"id_token": id_token})
-        if res.status_code != 200:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid Google ID token signature or expired token",
-            )
-        data = res.json()
+    # 1. Official Google OAuth2 ID token verification
+    request_transport = google_requests.Request()
+    client_id_aud = settings.GOOGLE_CLIENT_ID.strip() if settings.GOOGLE_CLIENT_ID else None
 
+    try:
+        data = google_id_token.verify_oauth2_token(
+            token_to_verify,
+            request_transport,
+            audience=client_id_aud,
+        )
+    except ValueError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Google token verification failed: {str(ve)}",
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unable to verify Google credential.",
+        )
+
+    # 2. Issuer validation
     iss = data.get("iss")
     if iss not in ["accounts.google.com", "https://accounts.google.com"]:
         raise HTTPException(
@@ -559,14 +590,16 @@ async def verify_google_identity(
             detail=f"Invalid Google token issuer: {iss}",
         )
 
-    if settings.GOOGLE_CLIENT_ID:
+    # 3. Audience validation
+    if client_id_aud:
         aud = data.get("aud")
-        if aud != settings.GOOGLE_CLIENT_ID:
+        if aud != client_id_aud:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Google token client ID does not match server configuration",
             )
 
+    # 4. Expiration validation
     exp = int(data.get("exp", 0))
     if exp < datetime.now(timezone.utc).timestamp():
         raise HTTPException(
@@ -574,6 +607,7 @@ async def verify_google_identity(
             detail="Google token has expired",
         )
 
+    # 5. Verified Email validation
     email = data.get("email")
     if not email:
         raise HTTPException(
@@ -581,11 +615,20 @@ async def verify_google_identity(
             detail="Google identity did not return an email address",
         )
 
+    email_verified = data.get("email_verified")
+    is_email_verified = email_verified is True or str(email_verified).lower() == "true"
+    if not is_email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Google account email is not verified. Please verify your email with Google.",
+        )
+
     return {
         "email": email.lower().strip(),
         "full_name": data.get("name") or data.get("given_name") or email.split("@")[0],
-        "google_sub": data.get("sub"),
+        "google_sub": str(data.get("sub")),
         "avatar_url": data.get("picture"),
+        "email_verified": True,
     }
 
 

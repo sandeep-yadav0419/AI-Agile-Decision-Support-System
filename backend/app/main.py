@@ -36,6 +36,7 @@ from app.routers import (
     team,
     users,
 )
+from app.schemas.user import GoogleAuthRequest, Token
 from app.services.seed import seed_demo_data
 
 logging.basicConfig(level=logging.INFO)
@@ -86,7 +87,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
                 "font-src 'self' https://fonts.gstatic.com data:; "
                 "img-src 'self' data: https: blob:; "
-                "connect-src 'self' https://accounts.google.com https://api.github.com http://localhost:* https://localhost:*; "
+                "connect-src 'self' https://accounts.google.com https://oauth2.googleapis.com https://www.googleapis.com https://api.github.com http://localhost:* http://127.0.0.1:* https://localhost:*; "
                 "frame-src 'self' https://accounts.google.com; "
                 "frame-ancestors 'none'; "
                 "object-src 'none'; "
@@ -167,6 +168,19 @@ async def generic_exception_handler(request: Request, exc: Exception):
 
 # Register routers
 app.include_router(auth.router)
+
+
+# Alias /auth/google to /api/auth/google for broad client compatibility
+@app.post("/auth/google", response_model=Token, tags=["auth"], include_in_schema=False)
+async def auth_google_alias(
+    payload: GoogleAuthRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    return await auth.google_auth(payload, request, response, db)
+
+
 app.include_router(security_audit.router)
 app.include_router(users.router)
 app.include_router(projects.router)
