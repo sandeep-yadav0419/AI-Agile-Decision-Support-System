@@ -5,7 +5,7 @@ Settings are loaded from environment variables / a local .env file via
 pydantic-settings.
 """
 from typing import List, Optional, Union
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24h
     MFA_TICKET_EXPIRE_MINUTES: int = 5  # 5 min for MFA challenge
+    PASSWORD_RESET_EXPIRE_MINUTES: int = 15
 
     # Cookie Configuration
     SESSION_COOKIE_NAME: str = "aidss_session"
@@ -34,6 +35,7 @@ class Settings(BaseSettings):
     ENABLE_RATE_LIMITING: bool = True
     ENABLE_SECURITY_HEADERS: bool = True
     ENABLE_HSTS: Optional[bool] = None  # None = enabled only on production/HTTPS
+    ENABLE_DEMO_SEED: bool = True
 
     # CORS Allowed Origins
     CORS_ORIGINS: List[str] = [
@@ -70,6 +72,10 @@ class Settings(BaseSettings):
     GITHUB_CLIENT_SECRET: str = ""
     GITHUB_REDIRECT_URI: str = "http://localhost:5173"
 
+    # The mail provider is intentionally external to the core application. In
+    # production, the reset endpoint never returns the token to the caller.
+    PASSWORD_RESET_URL: str = "http://localhost:5173/reset-password"
+
     @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT.lower() == "production"
@@ -93,6 +99,32 @@ class Settings(BaseSettings):
         if self.ENABLE_HSTS is not None:
             return self.ENABLE_HSTS
         return self.is_production
+
+    @model_validator(mode="after")
+    def validate_production_security(self):
+        """Refuse to boot production with development-grade secrets or unsafe demo data."""
+        if not self.is_production:
+            return self
+
+        insecure_values = {
+            "replace-with-a-secure-random-secret-key-in-production",
+            "replace-with-a-distinct-jwt-secret-key-in-production",
+            "replace-with-a-secure-csrf-secret-key-in-production",
+            "",
+        }
+        configured = {
+            "JWT_SECRET_KEY": self.effective_jwt_secret,
+            "CSRF_SECRET": self.effective_csrf_secret,
+        }
+        invalid = [name for name, value in configured.items() if value in insecure_values or len(value) < 32]
+        if invalid:
+            raise ValueError(
+                "Production security configuration is invalid: set random values of at least "
+                f"32 characters for {', '.join(invalid)}."
+            )
+        if self.ENABLE_DEMO_SEED:
+            raise ValueError("ENABLE_DEMO_SEED must be False in production.")
+        return self
 
     model_config = SettingsConfigDict(
         env_file=".env",

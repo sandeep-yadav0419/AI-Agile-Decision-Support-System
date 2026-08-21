@@ -42,6 +42,21 @@ class PasswordChange(BaseModel):
     confirm_new_password: Optional[str] = None
 
 
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str = Field(min_length=20, max_length=2048)
+    new_password: str = Field(min_length=8, max_length=256)
+    confirm_new_password: Optional[str] = None
+
+
+class PasswordResetResponse(BaseModel):
+    message: str
+    reset_token: Optional[str] = None
+
+
 class MFASetupResponse(BaseModel):
     secret: str
     otpauth_url: str

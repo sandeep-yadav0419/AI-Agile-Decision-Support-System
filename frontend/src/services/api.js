@@ -93,6 +93,10 @@ export const regenerateRecoveryCodes = async () => (await api.post("/api/auth/mf
 export const disableMFA = async (payload) => (await api.post("/api/auth/mfa/disable", payload)).data;
 export const changeAuthPassword = async (payload) => (await api.post("/api/auth/change-password", payload)).data;
 export const logoutAuth = async () => (await api.post("/api/auth/logout")).data;
+export const requestPasswordReset = async (email) =>
+  (await api.post("/api/auth/forgot-password", { email })).data;
+export const resetPassword = async (payload) =>
+  (await api.post("/api/auth/reset-password", payload)).data;
 export const getSecurityAuditLogs = async (limit = 25) => (await api.get("/api/auth/audit-logs", { params: { limit } })).data;
 
 // System

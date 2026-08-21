@@ -7,7 +7,10 @@ Permissions-Policy, Cache-Control, and Secure Error Handling).
 """
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
+from alembic import command
+from alembic.config import Config
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,7 +21,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app import models  # noqa: F401
 from app.config import CORS_ORIGIN_REGEX, settings
-from app.database import Base, engine, ensure_schema_compatibility, get_db
+from app.database import get_db
 from app.routers import (
     activities,
     ai,
@@ -36,6 +39,8 @@ from app.routers import (
     team,
     users,
 )
+from app.core.security import get_current_user
+from app.models.user import User
 from app.schemas.user import GoogleAuthRequest, Token
 from app.services.seed import seed_demo_data
 
@@ -45,19 +50,17 @@ logger = logging.getLogger("aidss.security")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Safely migrate existing tables if new columns added
-    ensure_schema_compatibility(engine)
-    # Creates all tables registered on Base
-    Base.metadata.create_all(bind=engine)
+    alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    command.upgrade(alembic_config, "head")
 
-    # Auto-seed initial demo agile project data if database is fresh
-    db = next(get_db())
-    try:
-        seed_demo_data(db)
-    except Exception as e:
-        logger.info(f"[AI-DSS Startup] Seed check info: {e}")
-    finally:
-        db.close()
+    if settings.ENABLE_DEMO_SEED:
+        db = next(get_db())
+        try:
+            seed_demo_data(db)
+        except Exception as e:
+            logger.info(f"[AI-DSS Startup] Seed check info: {e}")
+        finally:
+            db.close()
 
     yield
 
@@ -225,6 +228,13 @@ def health_check(db: Session = Depends(get_db)):
 
 
 @app.post("/api/seed")
-def trigger_seed(db: Session = Depends(get_db)):
+def trigger_seed(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if settings.is_production or not settings.ENABLE_DEMO_SEED:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    if current_user.role not in {"Project Manager", "Scrum Master"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Project Manager access required")
     seed_demo_data(db)
     return {"message": "Demo agile data initialized successfully"}
