@@ -249,7 +249,7 @@ def run_security_hardening_suite():
     print("✓ 6b. RBAC Enforcement: Viewer role prohibited from mutating tasks (HTTP 403)")
 
     # =========================================================================
-    # 7. SECURITY HEADERS VERIFICATION
+    # 7. SECURITY HEADERS & CORS VERIFICATION
     # =========================================================================
     res = client.get("/api/health")
     assert res.status_code == 200
@@ -261,7 +261,37 @@ def run_security_hardening_suite():
     assert headers_dict.get("X-Frame-Options") == "DENY"
     assert "Referrer-Policy" in headers_dict
     assert "Permissions-Policy" in headers_dict
-    print("✓ 7. Security Headers: Verified CSP, nosniff, DENY, Referrer-Policy, Permissions-Policy")
+    print("✓ 7a. Security Headers: Verified CSP, nosniff, DENY, Referrer-Policy, Permissions-Policy")
+
+    # 7b. CORS Verification (Vercel, Render, Localhost vs Untrusted Origin)
+    for allowed_origin in [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://ai-agile-decision-support-system.vercel.app",
+        "https://ai-agile-decision-support-system.onrender.com",
+    ]:
+        cors_opt = client.options("/api/health", headers={
+            "Origin": allowed_origin,
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        })
+        assert cors_opt.status_code == 200, f"CORS preflight failed for {allowed_origin}"
+        assert cors_opt.headers.get("access-control-allow-origin") == allowed_origin
+        assert cors_opt.headers.get("access-control-allow-credentials") == "true"
+
+        cors_get = client.get("/api/health", headers={"Origin": allowed_origin})
+        assert cors_get.status_code == 200
+        assert cors_get.headers.get("access-control-allow-origin") == allowed_origin
+        assert cors_get.headers.get("access-control-allow-credentials") == "true"
+
+    # Reject unauthorized origin
+    cors_bad = client.options("/api/health", headers={
+        "Origin": "https://unauthorized-attacker.example.com",
+        "Access-Control-Request-Method": "GET",
+    })
+    assert cors_bad.headers.get("access-control-allow-origin") is None or cors_bad.status_code == 400
+    print("✓ 7b. CORS Validation: Production Vercel/Render and localhost origins allowed; untrusted origins rejected")
+
 
     # =========================================================================
     # 8. SECURITY AUDIT TRAIL LOGGING

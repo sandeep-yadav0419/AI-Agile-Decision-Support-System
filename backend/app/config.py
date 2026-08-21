@@ -4,7 +4,8 @@ Application configuration.
 Settings are loaded from environment variables / a local .env file via
 pydantic-settings.
 """
-from typing import Optional
+from typing import List, Optional, Union
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,6 +34,31 @@ class Settings(BaseSettings):
     ENABLE_RATE_LIMITING: bool = True
     ENABLE_SECURITY_HEADERS: bool = True
     ENABLE_HSTS: Optional[bool] = None  # None = enabled only on production/HTTPS
+
+    # CORS Allowed Origins
+    CORS_ORIGINS: List[str] = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://ai-agile-decision-support-system.vercel.app",
+        "https://ai-agile-decision-support-system.onrender.com",
+    ]
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
+        if isinstance(v, str):
+            if not v.strip():
+                return []
+            if v.startswith("[") and v.endswith("]"):
+                import json
+                try:
+                    return json.loads(v)
+                except Exception:
+                    pass
+            return [i.strip() for i in v.split(",") if i.strip()]
+        elif isinstance(v, (list, tuple)):
+            return list(v)
+        return v
 
     # Google OAuth 2.0
     GOOGLE_CLIENT_ID: str = ""

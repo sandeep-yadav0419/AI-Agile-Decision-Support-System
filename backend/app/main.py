@@ -87,7 +87,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
                 "font-src 'self' https://fonts.gstatic.com data:; "
                 "img-src 'self' data: https: blob:; "
-                "connect-src 'self' https://accounts.google.com https://oauth2.googleapis.com https://www.googleapis.com https://api.github.com http://localhost:* http://127.0.0.1:* https://localhost:*; "
+                "connect-src 'self' https://accounts.google.com https://oauth2.googleapis.com https://www.googleapis.com https://api.github.com https://ai-agile-decision-support-system.vercel.app https://ai-agile-decision-support-system.onrender.com http://localhost:* http://127.0.0.1:* https://localhost:*; "
                 "frame-src 'self' https://accounts.google.com; "
                 "frame-ancestors 'none'; "
                 "object-src 'none'; "
@@ -119,6 +119,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS,
     allow_origin_regex=CORS_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
