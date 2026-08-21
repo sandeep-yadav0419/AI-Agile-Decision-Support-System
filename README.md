@@ -3,15 +3,15 @@
 An AI-assisted platform for managing agile software projects — projects, sprints,
 tasks, a Kanban board, and an AI decision/recommendation engine on top.
 
-Built incrementally, one fully-working feature at a time. This delivery covers
-**Feature 01 — Project Setup**, **Feature 02 — Authentication**, and
-**Feature 03 — Dashboard Layout**.
+The current release covers the complete project-management workflow: secure
+authentication, projects, sprints, tasks, Kanban, teams, explainable decision
+support, recommendations, risks, forecasts, reports, settings and automated tests.
 
 ## Tech stack
 
 | Layer    | Choice                                                        |
 |----------|-----------------------------------------------------------------|
-| Backend  | FastAPI, SQLAlchemy 2.x, SQLite, Pydantic Settings              |
+| Backend  | FastAPI, SQLAlchemy 2.x, SQLite/PostgreSQL, Alembic, Pydantic Settings |
 | Frontend | React 19, Vite, Tailwind CSS v4, React Router v7, lucide-react (icons)  |
 | Auth     | JWT bearer tokens (PyJWT), bcrypt password hashing               |
 
@@ -29,6 +29,11 @@ plaintext. The frontend stores the token in `localStorage` and attaches it to
 every request via an axios default header; a 401 from any request triggers an
 automatic logout.
 
+The application also supports Google/GitHub OAuth, one-time OAuth state
+correlation, optional TOTP MFA with recovery codes, account lockout and a
+short-lived password-reset flow. Development exposes a reset link for local
+testing; production requires a transactional email provider to deliver it.
+
 **Deliberate scope boundaries for this feature** (not oversights):
 - No refresh tokens / token rotation — a single 24h access token, matching
   what was asked for. Would be a natural hardening step later.
@@ -38,6 +43,17 @@ automatic logout.
 - `localStorage` for token storage (standard for SPA JWT auth) rather than an
   httpOnly cookie — simpler, but readable by JS (XSS-exposed) in a way a
   cookie wouldn't be. Worth revisiting if this becomes internet-facing.
+
+## Production safety
+
+- Production startup fails when JWT/CSRF secrets are missing, known defaults,
+  or shorter than 32 characters.
+- `ENABLE_DEMO_SEED=False` is mandatory in production. The seed endpoint is
+  hidden in production and role-protected in development.
+- Alembic owns schema versioning. Run `alembic upgrade head` before starting a
+  deployment; application startup also applies outstanding migrations.
+- GitHub Actions validates backend compilation, migrations and pytest, plus
+  frontend lint, unit tests and the production build.
 
 ## Dashboard layout
 
@@ -204,6 +220,13 @@ rather than one hardcoded port. If you still see this, check the origin
 your frontend is actually running on (Vite prints it on startup) is
 `http://localhost:<port>` or `http://127.0.0.1:<port>` — anything else
 (a different hostname, or `https`) needs adding explicitly.
+
+## Decision-engine scope
+
+The current “AI” is an explainable rule-based decision engine, not a trained
+ML model or external LLM. This makes recommendations reproducible and keeps
+project data local. See [`docs/AI_ENGINE.md`](docs/AI_ENGINE.md) for inputs,
+outputs and safe evolution guidance.
 
 ## Known, deliberate notes
 

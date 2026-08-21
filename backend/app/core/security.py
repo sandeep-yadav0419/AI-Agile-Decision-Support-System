@@ -174,6 +174,35 @@ def decode_mfa_challenge_token(token: str) -> str:
     return subject
 
 
+def create_password_reset_token(subject: str) -> str:
+    """Create a short-lived, purpose-bound password reset token."""
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": subject,
+        "type": "password_reset",
+        "exp": now + timedelta(minutes=settings.PASSWORD_RESET_EXPIRE_MINUTES),
+        "iat": now,
+        "jti": secrets.token_urlsafe(16),
+    }
+    return jwt.encode(payload, settings.effective_jwt_secret, algorithm=settings.ALGORITHM)
+
+
+def decode_password_reset_token(token: str) -> str:
+    try:
+        payload = jwt.decode(token, settings.effective_jwt_secret, algorithms=[settings.ALGORITHM])
+    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password reset link is invalid or has expired.",
+        )
+    if payload.get("type") != "password_reset" or not payload.get("sub"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password reset link is invalid or has expired.",
+        )
+    return payload["sub"]
+
+
 # ==========================================
 # CSRF & COOKIE SESSION MANAGEMENT
 # ==========================================
@@ -348,7 +377,7 @@ def get_current_user(
             csrf_cookie = request.cookies.get(settings.CSRF_COOKIE_NAME)
             csrf_header = request.headers.get("X-CSRF-Token")
             # If CSRF protection is enabled and request came via cookie without matching CSRF token:
-            if csrf_cookie and csrf_header and csrf_cookie != csrf_header:
+            if not csrf_cookie or not csrf_header or not secrets.compare_digest(csrf_cookie, csrf_header):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="CSRF token validation failed. State-changing request denied.",

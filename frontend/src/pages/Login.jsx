@@ -4,6 +4,7 @@ import { ArrowLeft, Eye, EyeOff, KeyRound, Lock, Mail, ShieldCheck, Sparkles } f
 import AuthShell from "../components/AuthShell.jsx";
 import { useAuth } from "../context/auth-context.js";
 import { describeError } from "../services/api";
+import { consumeOAuthState, createOAuthState } from "../services/oauthState.js";
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 const GITHUB_CLIENT_ID = import.meta.env.VITE_GITHUB_CLIENT_ID || "";
@@ -34,8 +35,13 @@ function Login() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
+    const returnedState = params.get("state");
     if (code) {
       window.history.replaceState({}, document.title, window.location.pathname);
+      if (!consumeOAuthState(returnedState)) {
+        setError("GitHub sign-in could not be verified. Please try again.");
+        return;
+      }
       handleGitHubCode(code);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -58,9 +64,10 @@ function Login() {
     setError("");
     if (!GITHUB_CLIENT_ID) return;
     const redirectUri = window.location.origin + "/login";
+    const oauthState = createOAuthState();
     const githubUrl = `https://github.com/login/oauth/authorize?client_id=${GITHUB_CLIENT_ID}&redirect_uri=${encodeURIComponent(
       redirectUri
-    )}&scope=read:user,user:email`;
+    )}&scope=read:user,user:email&state=${encodeURIComponent(oauthState)}`;
     window.location.href = githubUrl;
   }
 
@@ -410,7 +417,7 @@ function Login() {
                       Password
                     </label>
                     <Link
-                      to="/register"
+                      to="/forgot-password"
                       className="text-[11px] font-medium text-muted hover:text-signal transition"
                     >
                       Forgot password?

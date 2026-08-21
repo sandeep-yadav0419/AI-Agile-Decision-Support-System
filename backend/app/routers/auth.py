@@ -8,11 +8,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.core.rate_limit import check_login_lockout, enforce_rate_limit
 from app.core.security import (
     clear_session_cookies,
     create_access_token,
     create_mfa_challenge_token,
+    create_password_reset_token,
+    decode_password_reset_token,
     decode_mfa_challenge_token,
     generate_csrf_token,
     generate_qr_code_data_url,
@@ -43,6 +46,9 @@ from app.schemas.user import (
     MFALoginRequest,
     MFASetupResponse,
     PasswordChange,
+    PasswordResetConfirm,
+    PasswordResetRequest,
+    PasswordResetResponse,
     Token,
     UserCreate,
     UserLogin,
@@ -50,6 +56,10 @@ from app.schemas.user import (
 )
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+PASSWORD_RESET_MESSAGE = (
+    "If an active account exists for that email, password reset instructions are available."
+)
 
 
 @router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
@@ -190,6 +200,65 @@ def login(
         csrf_token=csrf,
         user=UserResponse.model_validate(user),
     )
+
+
+@router.post("/forgot-password", response_model=PasswordResetResponse)
+def forgot_password(
+    payload: PasswordResetRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Issue a short-lived reset token without disclosing whether an email exists."""
+    enforce_rate_limit(request, max_requests=5, window_seconds=300, prefix="forgot_password")
+    clean_email = payload.email.lower().strip()
+    user = db.query(User).filter(User.email == clean_email, User.is_active.is_(True)).first()
+    token = create_password_reset_token(clean_email) if user else None
+
+    if user:
+        log_security_audit(
+            db,
+            event_type="PASSWORD_RESET_REQUESTED",
+            status="SUCCESS",
+            user_id=user.id,
+            ip_address=request.client.host if request.client else None,
+        )
+
+    # Development can display the token so the flow is testable without a mail
+    # vendor. Production deliberately returns no token; connect a transactional
+    # email provider to deliver PASSWORD_RESET_URL?token=<token>.
+    return PasswordResetResponse(
+        message=PASSWORD_RESET_MESSAGE,
+        reset_token=token if token and not settings.is_production else None,
+    )
+
+
+@router.post("/reset-password")
+def reset_password(
+    payload: PasswordResetConfirm,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    enforce_rate_limit(request, max_requests=10, window_seconds=300, prefix="reset_password")
+    email = decode_password_reset_token(payload.token)
+    if payload.confirm_new_password and payload.new_password != payload.confirm_new_password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Passwords do not match.")
+    validate_password_strength(payload.new_password)
+    user = db.query(User).filter(User.email == email, User.is_active.is_(True)).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password reset link is invalid or has expired.")
+    user.hashed_password = hash_password(payload.new_password)
+    user.password_changed_at = datetime.now(timezone.utc)
+    user.failed_login_attempts = 0
+    user.lockout_until = None
+    db.commit()
+    log_security_audit(
+        db,
+        event_type="PASSWORD_RESET_COMPLETED",
+        status="SUCCESS",
+        user_id=user.id,
+        ip_address=request.client.host if request.client else None,
+    )
+    return {"message": "Password reset successfully. You can now sign in."}
 
 
 @router.post("/mfa/verify-login", response_model=Token)
